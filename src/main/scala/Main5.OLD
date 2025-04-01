@@ -1,0 +1,125 @@
+package main5
+
+import scala.compiletime.ops.int._
+import java.util.jar.Attributes.Name
+import scala.compiletime.{erasedValue, constValue, constValueOpt}
+import scala.util.Random
+
+trait Structure[A]
+case class Branch[A](shapes: List[Structure[A]]) extends Structure[A]:
+  override def toString(): String = shapes.mkString("(", ", ", ")")
+case class Leaf[A](shape: A) extends Structure[A]:
+  override def toString(): String = shape.toString()
+object EmptyStructure extends Structure:
+  override def toString(): String = "()"
+
+type IntElem[X] = X match
+  case Int => Int
+
+type StringElem[X] = X match
+  case String => String
+
+case class Name(name: String)
+
+type Shape = Structure[Int]
+type NameStructure = Structure[Name]
+
+trait Index[A]:
+  type StructureType
+  def value: Structure[StructureType]
+
+trait TupleIndex:
+
+  given tuple1[IndexT <: Index, T : IndexT]: Index[Tuple1[T]] with
+    val indexT = summon[Index[T]]
+    type StructureType = indexT.StructureType
+    inline def value = Branch(List[Structure[this.StructureType]](indexT.value))
+
+  type Aux[ST] = [A] =>> Index[A] { type StructureType = ST }
+
+  given tuple2[ST, IndexT1 <: Aux[ST], IndexT2 <: Aux[ST], T1: IndexT1, T2: IndexT2]: Index[Tuple2[T1, T2]] with
+    type StructureType = ST
+    inline def value = Branch(
+      List[Structure[ST]](
+        summon[IndexT1[T1]].value, 
+        summon[IndexT2[T2]].value
+      )
+    )
+
+  given tuple3[ST, IndexT1 <: Aux[ST], IndexT2 <: Aux[ST], IndexT3 <: Aux[ST], T1: IndexT1, T2: IndexT2, T3: IndexT3]: Index[Tuple3[T1, T2, T3]] with
+    type StructureType = ST
+    inline def value = Branch(
+      List[Structure[ST]](
+        summon[IndexT1[T1]].value, 
+        summon[IndexT2[T2]].value, 
+        summon[IndexT3[T3]].value
+      )
+    )
+
+  inline def constValueTuple[T <: Tuple]: T =
+    (inline erasedValue[T] match
+      case _: EmptyTuple => EmptyTuple
+      case _: (t *: ts) =>
+        (constValueOpt[t] match
+          case Some(v) => v *: constValueTuple[ts]
+          case None =>
+            inline erasedValue[t] match
+              case _: (t2 *: ts2) => constValueTuple[t2 *: ts2].asInstanceOf[t] *: constValueTuple[ts]
+              case _ => -1 *: constValueTuple[ts]
+        ).asInstanceOf[t *: ts]
+    ).asInstanceOf[T]
+
+trait NameIndex[A] extends Index[A]:
+  type StructureType = Name
+  type StructureT = Structure[StructureType]
+  def names: NameStructure
+  def value = names
+
+object NameIndex:
+  
+  given stringIsNameStructure[T <: String:  ValueOf]: NameIndex[T] with
+    inline def names: NameStructure = Leaf(Name(summon[ValueOf[T]].value))
+
+
+  given nameIsNameStructure[T <: Name:  ValueOf]: NameIndex[T] with
+    inline def names: NameStructure = Leaf(summon[ValueOf[T]].value)
+
+trait ShapeIndex[A] extends Index[A]:
+  type StructureType = Int
+  def shape: Shape
+  def value = shape
+
+object ShapeIndex:
+
+  given intIsIndex[T <: Int:  ValueOf]: ShapeIndex[T] with
+    inline def shape: Shape = Leaf(summon[ValueOf[T]].value)
+
+case class Tensor[I : ShapeIndex]():
+  def shape: Shape = summon[ShapeIndex[I]].shape
+  override def toString(): String = f"Tensor[${shape}]"
+
+@main def hello5(): Unit =
+  import Index.*
+
+  val xx = summon[ShapeIndex[100]]
+  println(xx.shape)
+  val runtime = Random.between(1, 10)
+  val runtimeIndex = summon[ShapeIndex[runtime.type]]
+  println(runtimeIndex.shape)
+  
+  val tuple1Index = summon[ShapeIndex[Tuple1[100]]]
+  println(tuple1Index.shape)
+  val tuple2Index = summon[ShapeIndex[(100, 200)]]
+  println(tuple2Index.shape)
+  val tuple3Index = summon[ShapeIndex[(100, 200, 300)]]
+  println(tuple3Index.shape)
+
+  val n1 = summon[NameIndex["extra"]]
+  println(n1.names)
+
+  val t1 = Tensor[100]()
+  val t2 = Tensor[(100, 200)]()
+
+  println((t1, t2))
+
+  val x: List["String" | Int] = List(1, "String")
